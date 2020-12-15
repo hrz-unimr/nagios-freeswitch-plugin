@@ -12,6 +12,8 @@
 # Many thanks to Ton Voon for writing the Nagios::Plugin Perl module
 #   http://search.cpan.org/~tonvoon/Nagios-Plugin-0.36/
 #
+# Switch from Nagios::Plugin to Monitoring::Plugin library
+#
 # Remember to modify the $fs_cli_location variable below to suit your install.
 #
 # The queries that you can pass to this plugin *resemble* but *do not*
@@ -65,7 +67,7 @@ unless($@) {
   use Switch 'Perl6';
 }
 
-use Nagios::Plugin;
+use Monitoring::Plugin;
 
 # use vars qw($VERSION $PROGNAME $result);
 our ( $VERSION, $PROGNAME, $result, $rawdata );
@@ -97,7 +99,7 @@ my @allowed_checks = (
 );
 
 # II. Usage/Help
-my $p = Nagios::Plugin->new(
+my $p = Monitoring::Plugin->new(
     usage => "Usage: %s 
        [ -q|--query=These are mapped to specific fs_cli -x checks
                     e.g. show-calls-count is mapped to 'show calls count'
@@ -323,7 +325,7 @@ $p->add_perfdata(
     label     => $perfdatatitle,
     value     => $result,
     threshold => $threshold,
-    uom       => "",               # Bug in Nagios::Plugin version 0.15
+    uom       => "",               # Bug in Nagios::Plugin version 0.15 (required for Monitoring::Plugin?)
 );
 
 # is there a 2nd set of performance data:
@@ -331,7 +333,7 @@ if ( defined $result2 ) {
     $p->add_perfdata(
         label => $label2,
         value => $result2,
-        uom   => "",               # Bug in Nagios::Plugin version 0.15
+        uom   => "",               # Bug in Nagios::Plugin version 0.15 (required for Monitoring::Plugin?)
     );
 }
 
