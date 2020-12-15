@@ -88,6 +88,8 @@ my @allowed_checks = (
     "show-registrations-count",
     "sofia-status-internal",
     "sofia-status-external",
+    "sofia-status-internal-ipv6",
+    "sofia-status-external-ipv6",
     "sofia-status-profile-internal-failed-calls-in",
     "sofia-status-profile-internal-failed-calls-out"
 );
@@ -205,6 +207,50 @@ given ( $query ) {
             if ( /external/i ) {
                 my @temp = split( /\s+/, $_ );
                 if ( $temp[1] eq 'external' ) {
+                    $rawdata = $_;
+                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
+                    $result2 = $temp[5];
+                    $label2  = "# of Calls";
+                    if ( $temp[4] =~ /^running$/i ) {
+                        $result = 1;
+                    } else {
+                        $result = 0;
+                    }
+                    last;
+                }
+            }
+        }
+    }
+
+    when ( "sofia-status-internal-ipv6" ) {
+        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
+        $subquery      = 'internal';
+        foreach ( @fs_cli_output ) {
+            if ( /internal/i ) {
+                my @temp = split( /\s+/, $_ );
+                if ( $temp[1] eq 'internal-ipv6' ) {
+                    $rawdata = $_;
+                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
+                    $result2 = $temp[5];
+                    $label2  = "# of Calls";
+                    if ( $temp[4] =~ /^running$/i ) {
+                        $result = 1;
+                    } else {
+                        $result = 0;
+                    }
+                    last;
+                }
+            }
+        }
+    }
+
+    when ( "sofia-status-external-ipv6" ) {
+        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
+        $subquery      = 'external';
+        foreach ( @fs_cli_output ) {
+            if ( /external/i ) {
+                my @temp = split( /\s+/, $_ );
+                if ( $temp[1] eq 'external-ipv6' ) {
                     $rawdata = $_;
                     $temp[5] =~ s/[^0-9]//g;    # strip out parens
                     $result2 = $temp[5];
