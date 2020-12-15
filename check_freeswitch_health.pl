@@ -32,6 +32,8 @@
 #       This check also returns # of calls as performance data.
 #  sofia-status-external - looks for the 'external' Name and expects to
 #       find a state of RUNNING. Same format as the 'internal' test above.
+#  sofia-status-external-ipv6 - looks for the 'external-ipv6' Name and expects to
+#       find a state of RUNNING. Same format as the 'internal-ipv6' test above.
 #  show-calls-count - reports total # of current calls.
 #  sofia-status-profile-internal-failed-calls-in - reports the FAILED-CALLS-IN
 #       parameter in the 'sofia status profile internal' query.
@@ -224,9 +226,9 @@ given ( $query ) {
 
     when ( "sofia-status-internal-ipv6" ) {
         @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'internal';
+        $subquery      = 'internal-ipv6';
         foreach ( @fs_cli_output ) {
-            if ( /internal/i ) {
+            if ( /internal-ipv6/i ) {
                 my @temp = split( /\s+/, $_ );
                 if ( $temp[1] eq 'internal-ipv6' ) {
                     $rawdata = $_;
@@ -246,9 +248,9 @@ given ( $query ) {
 
     when ( "sofia-status-external-ipv6" ) {
         @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'external';
+        $subquery      = 'external-ipv6';
         foreach ( @fs_cli_output ) {
-            if ( /external/i ) {
+            if ( /external-ipv6/i ) {
                 my @temp = split( /\s+/, $_ );
                 if ( $temp[1] eq 'external-ipv6' ) {
                     $rawdata = $_;
