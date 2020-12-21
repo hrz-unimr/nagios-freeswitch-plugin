@@ -68,6 +68,7 @@ unless($@) {
 }
 
 use Monitoring::Plugin;
+use XML::LibXML;
 
 # use vars qw($VERSION $PROGNAME $result);
 our ( $VERSION, $PROGNAME, $result, $rawdata );
@@ -81,28 +82,34 @@ $PROGNAME = basename( $0 );
 my $fs_cli_location = "/usr/bin/fs_cli";
 
 # Declare some vars
-my @fs_cli_output;
-my $subquery;
+my $fs_cli_output;
+my $fs_status;
+my $dom;
+my $profile;
+my $gateway;
+my $attribute;
 my $result2;
 my $label2;
 
-# Currently processed fs_cli queries:
-my @allowed_checks = (
-    "show-calls-count",
-    "show-registrations-count",
-    "sofia-status-internal",
-    "sofia-status-external",
-    "sofia-status-internal-ipv6",
-    "sofia-status-external-ipv6",
-    "sofia-status-profile-internal-failed-calls-in",
-    "sofia-status-profile-internal-failed-calls-out"
-);
+my @allowed_attributes_profile = ( 'url',
+				   'tls-url',
+				   'registrations',
+				   'failed-calls-in',
+				   'failed-calls-out'
+    );
+
+my @allowed_attributes_gateway = ( 'to',
+				   'failed-calls-in',
+				   'failed-calls-out'
+    );
+
 
 # II. Usage/Help
 my $p = Monitoring::Plugin->new(
     usage => "Usage: %s 
-       [ -q|--query=These are mapped to specific fs_cli -x checks
-                    e.g. show-calls-count is mapped to 'show calls count'
+         --profile=name of SIP profile
+                   e.g. internal, external, internal-ipv6
+       [ --gateway=name of gateway ]   
        [ -w|--warning=threshold that generates a Nagios warning ]
        [ -c|--critical=threshold that generates a Nagios critical warning ]
        [ -f|--perfdatatitle=title for Nagios Performance Data. 
@@ -124,11 +131,24 @@ my $p = Monitoring::Plugin->new(
 # III. Command line arguments/options
 # See Getopt::Long for more
 $p->add_arg(
-    spec     => 'query|q=s',
+    spec     => 'profile=s',
     required => 1,
-    help     => "-q, --query=STRING
-    What check to run. E.g. show-calls-count, sofia-status-internal, etc. 
+    help     => "--profile=STRING
+    What profile to check. E.g. internal, external, external-ipv6 etc. 
     REQUIRED."
+    );
+
+$p->add_arg(
+    spec => 'gateway=s',
+    help => "--gateway=STRING
+    What gateway to check within a profile"
+);
+
+$p->add_arg(
+    spec => 'attribute=s',
+    default => 'url',
+    help => "--attribute=STRING
+    What attribute to check of profile or gateway: url, tls-url, to, registrations, calls-in, calls-out, failed-calls-in, failed-calls-out"
 );
 
 $p->add_arg(
@@ -158,152 +178,132 @@ $p->getopts;
 
 # IV. Sanity check the command line arguments
 # Ensure that only one of the supported fs_cli queries are called:
-my $query = $p->opts->query;
-unless ( grep /^$query$/i, @allowed_checks ) {
-    $p->nagios_die( "Sorry, that's not an allowed check (yet?)!" );
+
+$fs_cli_output = `$fs_cli_location -x "sofia xmlstatus"`;
+$dom = XML::LibXML->load_xml(string => $fs_cli_output);
+
+my $calls;
+my @profiles;
+$profile = $p->opts->profile;
+foreach my $node ($dom->findnodes('./profiles/profile')) {
+    my $prf = $node->findvalue('./name');
+    push( @profiles, $prf );
+    if ( $prf eq $profile ) {
+	my $state =  $node->findvalue('./state');
+	if( $state =~ /\((\d+)\)/ ){
+	    $calls = $1;
+	}
+	last;
+    }
+}
+
+unless( grep /^$profile$/, @profiles ){
+    $p->nagios_exit( CRITICAL, join( ' ', "Sorry, that's not an running profile ($profile)!",
+				     'Available:', join( ', ', @profiles ) ) );
 }
 
 
-# V. Check the stuff
 
-# Set up and run the specific queries
-given ( $query ) {
+my @gateways;
+$gateway = $p->opts->gateway;
+$attribute = $p->opts->attribute;
+if ( defined $gateway ) {
+    foreach my $node ($dom->findnodes('./profiles/gateway')) {
+	my $gtw = $node->findvalue('./name');
+	push( @gateways, $gtw );
+	if ( $gtw eq $gateway ) {
+	    last;
+	}
+    }
+    unless( grep /^$gateway$/, @gateways ){
+	$p->nagios_exit(  CRITICAL, join( ' ', "Sorry, that's not an running gateway ($gateway)!",
+					  'Available:', join( ', ', @gateways ) ) );
+    }
+    # set default attribute
+    if ( $attribute eq 'url' ){
+	$attribute = 'to';
+    }
+}
 
-    # Perform a 'show calls count'
-    when ( "show-calls-count" ) {
-        @fs_cli_output = `$fs_cli_location -x "show calls count"`;
-        foreach ( @fs_cli_output ) {
-            if ( /total/i ) {
-                my @temp = split( /\s+/, $_ );
-                $rawdata = $_;
-                $result  = $temp[0];
-                last;
-            }
-        }
+my $perfdatatitle;
+unless ( defined $gateway ) {
+    
+    $perfdatatitle = join( '/', 'sofia', 'status', $profile, $attribute );
+    $fs_cli_output = `$fs_cli_location -x "sofia xmlstatus profile $profile"`;
+    $dom = XML::LibXML->load_xml(string => $fs_cli_output);
+    
+    my $path = './profile/profile-info';
+    given( $attribute ){
+	when('url') {
+	    my $url = $dom->findvalue("$path/$attribute");
+	    if ( defined $url ) {
+		$result = 1;
+	    } else {
+		$result = 0;
+	    }
+	    $result2 = $calls;
+	    $label2 = '# of calls';
+	    $rawdata = join( ' ', $url, 'RUNNING' );
+	}
+	when('tls-url'){
+	    
+	    my $tls_url = $dom->findvalue("$path/$attribute");
+	    if ( defined $tls_url ) {
+		$result = 1;
+	    } else {
+		$result = 0;
+	    }
+	    $result2 = $calls;
+	    $label2 = '# of calls';
+	    $rawdata = join( ' ', $tls_url, 'RUNNING (TLS)' );
+	}
+	when('registrations') {
+	    $result = $dom->findvalue("$path/registrations");
+	    $rawdata = join( ' ', $result, 'total' );
+	}
+	when('failed-calls-in'){
+	    $result = $dom->findvalue("$path/failed-calls-in");
+	    $rawdata = join( ' ', $result, 'total' );
+	}
+	when('failed-calls-out'){
+	    $result = $dom->findvalue("$path/failed-calls-out");
+	    $rawdata = join( ' ', $result, 'total' );
+	}
+	default {
+	    $p->nagios_die( join(' ', "Sorry, that's not an allowed attribute for profile (attribute=$attribute)!",
+		'Allowed:', join( ', ', @allowed_attributes_profile ) ) );
+	}
     }
 
-    when ( "sofia-status-internal" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'internal';
-        foreach ( @fs_cli_output ) {
-            if ( /internal/i ) {
-                my @temp = split( /\s+/, $_ );
-                if ( $temp[1] eq 'internal' ) {
-                    $rawdata = $_;
-                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
-                    $result2 = $temp[5];
-                    $label2  = "# of Calls";
-                    if ( $temp[4] =~ /^running$/i ) {
-                        $result = 1;
-                    } else {
-                        $result = 0;
-                    }
-                    last;
-                }
-            }
-        }
-    }
+} else {
+    $perfdatatitle = join ( '/', 'sofia', 'status', $gateway, $attribute );
+    $fs_cli_output = `$fs_cli_location -x "sofia xmlstatus gateway $gateway"`;
+    $dom = XML::LibXML->load_xml(string => $fs_cli_output);
+    my $state = $dom->findvalue('./gateway/state');
+    my $status = $dom->findvalue('./gateway/status');
+    my $to = $dom->findvalue('./gateway/to');
 
-    when ( "sofia-status-external" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'external';
-        foreach ( @fs_cli_output ) {
-            if ( /external/i ) {
-                my @temp = split( /\s+/, $_ );
-                if ( $temp[1] eq 'external' ) {
-                    $rawdata = $_;
-                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
-                    $result2 = $temp[5];
-                    $label2  = "# of Calls";
-                    if ( $temp[4] =~ /^running$/i ) {
-                        $result = 1;
-                    } else {
-                        $result = 0;
-                    }
-                    last;
-                }
-            }
-        }
-    }
-
-    when ( "sofia-status-internal-ipv6" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'internal-ipv6';
-        foreach ( @fs_cli_output ) {
-            if ( /internal-ipv6/i ) {
-                my @temp = split( /\s+/, $_ );
-                if ( $temp[1] eq 'internal-ipv6' ) {
-                    $rawdata = $_;
-                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
-                    $result2 = $temp[5];
-                    $label2  = "# of Calls";
-                    if ( $temp[4] =~ /^running$/i ) {
-                        $result = 1;
-                    } else {
-                        $result = 0;
-                    }
-                    last;
-                }
-            }
-        }
-    }
-
-    when ( "sofia-status-external-ipv6" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status"`;
-        $subquery      = 'external-ipv6';
-        foreach ( @fs_cli_output ) {
-            if ( /external-ipv6/i ) {
-                my @temp = split( /\s+/, $_ );
-                if ( $temp[1] eq 'external-ipv6' ) {
-                    $rawdata = $_;
-                    $temp[5] =~ s/[^0-9]//g;    # strip out parens
-                    $result2 = $temp[5];
-                    $label2  = "# of Calls";
-                    if ( $temp[4] =~ /^running$/i ) {
-                        $result = 1;
-                    } else {
-                        $result = 0;
-                    }
-                    last;
-                }
-            }
-        }
-    }
-
-    when ( "sofia-status-profile-internal-failed-calls-in" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status profile internal"`;
-        $subquery      = 'failed-calls-in';
-        foreach ( @fs_cli_output ) {
-            if ( /failed-calls-in/i ) {
-                my @temp = split( /\s+/, $_ );
-                $rawdata = $_;
-                $result  = $temp[1];
-            }
-        }
-    }
-
-    when ( "sofia-status-profile-internal-failed-calls-out" ) {
-        @fs_cli_output = `$fs_cli_location -x "sofia status profile internal"`;
-        $subquery      = 'failed-calls-out';
-        foreach ( @fs_cli_output ) {
-            if ( /failed-calls-out/i ) {
-                my @temp = split( /\s+/, $_ );
-                $rawdata = $_;
-                $result  = $temp[1];
-            }
-        }
-    }
-
-    when ( "show-registrations-count" ) {
-        @fs_cli_output = `$fs_cli_location -x "show registrations"`;
-        foreach ( @fs_cli_output ) {
-            if ( /total/i ) {
-                my @temp = split( /\s+/, $_ );
-                $rawdata = $_;
-                $result  = $temp[0];
-                last;
-            }
-        }
+    given( $attribute ) {
+	when('to'){
+	    if ( $state eq 'REGED' and $status eq 'UP' ) {
+		$result = 1;
+	    } else {
+		$result = 0;
+	    }
+	    $rawdata = join( ' ', $to, $state, '('.$status.')'); 
+	}
+	when('failed-calls-in'){
+	    $result = $dom->findvalue('./gateway/failed-calls-in');
+	    $rawdata = join( ' ', $result, 'total' );
+	}
+	when('failed-calls-out'){
+	    $result = $dom->findvalue('./gateway/failed-calls-out');
+	    $rawdata = join( ' ', $result, 'total' );
+	}
+	default {
+	    $p->nagios_die( join(' ', "Sorry, that's not an allowed attribute for gateway (attribute=$attribute)!",
+		'Allowed:', join( ', ', @allowed_attributes_gateway ) ) );
+	}
     }
 }
 
@@ -315,7 +315,7 @@ my $threshold = $p->set_thresholds(
     critical => $p->opts->critical
 );
 
-my $perfdatatitle = $query;
+
 if ( defined $p->opts->perfdatatitle ) {
     $perfdatatitle = $p->opts->perfdatatitle;
 }
