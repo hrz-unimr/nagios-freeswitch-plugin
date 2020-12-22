@@ -69,6 +69,7 @@ unless($@) {
 
 use Monitoring::Plugin;
 use XML::LibXML;
+use List::MoreUtils qw(uniq);
 
 # use vars qw($VERSION $PROGNAME $result);
 our ( $VERSION, $PROGNAME, $result, $rawdata );
@@ -87,6 +88,9 @@ my $fs_status;
 my $dom;
 my $profile;
 my $gateway;
+my $calls_current;
+my @profiles;
+my @gateways;
 my $attribute;
 my $result2;
 my $label2;
@@ -95,7 +99,8 @@ my @allowed_attributes_profile = ( 'url',
 				   'tls-url',
 				   'registrations',
 				   'failed-calls-in',
-				   'failed-calls-out'
+				   'failed-calls-out',
+				   'calls'
     );
 
 my @allowed_attributes_gateway = ( 'to',
@@ -104,25 +109,43 @@ my @allowed_attributes_gateway = ( 'to',
     );
 
 
+# get initial information of fs_cli
+$fs_cli_output = `$fs_cli_location -x "sofia xmlstatus"`;
+$dom = XML::LibXML->load_xml(string => $fs_cli_output);
+
+# parse profiles
+foreach my $node ($dom->findnodes('./profiles/profile')) {
+    my $prf = $node->findvalue('./name');
+    push( @profiles, $prf );
+}
+@profiles = uniq( @profiles );
+
+# parse gateways
+foreach my $node ($dom->findnodes('./profiles/gateway')) {
+    my $gtw = $node->findvalue('./name');
+    push( @gateways, $gtw );
+}
+@gateways = uniq( @gateways );
+
 # II. Usage/Help
 my $p = Monitoring::Plugin->new(
     usage => "Usage: %s 
-         --profile=name of SIP profile
-                   e.g. internal, external, internal-ipv6
-       [ --gateway=name of gateway ]   
+       < --profile=name of SIP profile
+                   parsed: ".join(', ', @profiles)."
+       | --gateway=name of gateway
+                   parsed: ".join(', ', @gateways)."
+       >
+       [ --attribute=name of profile/gateway attribute to check ]
        [ -w|--warning=threshold that generates a Nagios warning ]
        [ -c|--critical=threshold that generates a Nagios critical warning ]
        [ -f|--perfdatatitle=title for Nagios Performance Data. 
                             Note: don't use spaces. ]
-
-       See the documentation in this script's comments for accepted queries.
-       For example, you can run 'head -n 50 check_freeswitch_health.pl'
        ",
     version => $VERSION,
     blurb   => "This plugin requires the FreeSWITCH fs_cli command to perform checks.",
     extra   => qq(
     An example query:   
-    ./check_freeswitch_health.pl -q show-calls-count -w 100 -c 150 -f Total_Calls
+    ./check_freeswitch_health.pl --profile=internal --attribute=calls -w 100 -c 150 -f Current_Calls
     ),
     license =>
       "This Nagios plugin is subject to the terms of the Mozilla Public License, v. 2.0.",
@@ -132,38 +155,37 @@ my $p = Monitoring::Plugin->new(
 # See Getopt::Long for more
 $p->add_arg(
     spec     => 'profile=s',
-    required => 1,
+    default => 'internal',
     help     => "--profile=STRING
-    What profile to check. E.g. internal, external, external-ipv6 etc. 
-    REQUIRED."
+    What profile to check. E.g. internal, external, external-ipv6 etc."
     );
 
 $p->add_arg(
     spec => 'gateway=s',
     help => "--gateway=STRING
-    What gateway to check within a profile"
-);
+    What gateway to check."
+    );
 
 $p->add_arg(
     spec => 'attribute=s',
     default => 'url',
     help => "--attribute=STRING
     What attribute to check of profile or gateway: url, tls-url, to, registrations, calls-in, calls-out, failed-calls-in, failed-calls-out"
-);
+    );
 
 $p->add_arg(
     spec => 'warning|w=s',
     help => "-w, --warning=INTEGER:INTEGER
     Minimum and maximum number of allowable result, outside of which a
     warning will be generated. If omitted, no warning is generated."
-);
+    );
 
 $p->add_arg(
     spec => 'critical|c=s',
     help => "-c, --critical=INTEGER:INTEGER
     Minimum and maximum number of allowable result, outside of which a
     an alert will be generated.  If omitted, no alert is generated."
-);
+    );
 
 $p->add_arg(
     spec     => 'perfdatatitle|f=s',
@@ -171,7 +193,7 @@ $p->add_arg(
     help     => "-f, --perfdatatitle=STRING
     If you want to collect Nagios Performance Data, you may
     give the check an appropriate name. OPTIONAL"
-);
+    );
 
 # Parse arguments and process standard ones (e.g. usage, help, version)
 $p->getopts;
@@ -179,19 +201,14 @@ $p->getopts;
 # IV. Sanity check the command line arguments
 # Ensure that only one of the supported fs_cli queries are called:
 
-$fs_cli_output = `$fs_cli_location -x "sofia xmlstatus"`;
-$dom = XML::LibXML->load_xml(string => $fs_cli_output);
-
-my $calls;
-my @profiles;
+# check if selected profile exists and get current calls
 $profile = $p->opts->profile;
 foreach my $node ($dom->findnodes('./profiles/profile')) {
     my $prf = $node->findvalue('./name');
-    push( @profiles, $prf );
     if ( $prf eq $profile ) {
 	my $state =  $node->findvalue('./state');
 	if( $state =~ /\((\d+)\)/ ){
-	    $calls = $1;
+	    $calls_current = $1;
 	}
 	last;
     }
@@ -202,14 +219,11 @@ unless( grep /^$profile$/, @profiles ){
 				     'Available:', join( ', ', @profiles ) ) );
 }
 
-
-
-my @gateways;
+# check if selected gateway of profile exists
 $gateway = $p->opts->gateway;
 $attribute = $p->opts->attribute;
 if ( defined $gateway ) {
-    foreach my $node ($dom->findnodes('./profiles/gateway')) {
-	my $gtw = $node->findvalue('./name');
+    foreach my $gtw (@gateways) {
 	push( @gateways, $gtw );
 	if ( $gtw eq $gateway ) {
 	    last;
@@ -219,7 +233,7 @@ if ( defined $gateway ) {
 	$p->nagios_exit(  CRITICAL, join( ' ', "Sorry, that's not an running gateway ($gateway)!",
 					  'Available:', join( ', ', @gateways ) ) );
     }
-    # set default attribute
+    # set default attribute for gateway
     if ( $attribute eq 'url' ){
 	$attribute = 'to';
     }
@@ -241,8 +255,8 @@ unless ( defined $gateway ) {
 	    } else {
 		$result = 0;
 	    }
-	    $result2 = $calls;
-	    $label2 = '# of calls';
+	    $result2 = $calls_current;
+	    $label2 = '# of current calls';
 	    $rawdata = join( ' ', $url, 'RUNNING' );
 	}
 	when('tls-url'){
@@ -253,21 +267,25 @@ unless ( defined $gateway ) {
 	    } else {
 		$result = 0;
 	    }
-	    $result2 = $calls;
-	    $label2 = '# of calls';
+	    $result2 = $calls_current;
+	    $label2 = '# of current calls';
 	    $rawdata = join( ' ', $tls_url, 'RUNNING (TLS)' );
 	}
 	when('registrations') {
 	    $result = $dom->findvalue("$path/registrations");
-	    $rawdata = join( ' ', $result, 'total' );
+	    $rawdata = join( ' ', $result, 'total registrations' );
 	}
 	when('failed-calls-in'){
 	    $result = $dom->findvalue("$path/failed-calls-in");
-	    $rawdata = join( ' ', $result, 'total' );
+	    $rawdata = join( ' ', $result, 'total failed-calls-in' );
 	}
 	when('failed-calls-out'){
 	    $result = $dom->findvalue("$path/failed-calls-out");
-	    $rawdata = join( ' ', $result, 'total' );
+	    $rawdata = join( ' ', $result, 'total failed-calls-out' );
+	}
+	when('calls'){
+	    $result = $calls_current;
+	    $rawdata = join( ' ', $result, 'current calls' );
 	}
 	default {
 	    $p->nagios_die( join(' ', "Sorry, that's not an allowed attribute for profile (attribute=$attribute)!",
