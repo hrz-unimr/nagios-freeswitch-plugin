@@ -5,14 +5,21 @@
 # Written by Khalid J Hosein, Platform28, http://platform28.com
 # July 2013
 #
+# Refactored by Andreas Gabriel, Philipps Universitaet Marburg
+# https://www.uni-marburg.de/de/hrz
+# Dez 2020
+#
+#    - uses now the xml api of fs_cli
+#    - options are not backward compatible due to lacking flexibility
+#    - switch from Nagios::Plugin to Monitoring::Plugin library
+#
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
+#
 # Many thanks to Ton Voon for writing the Nagios::Plugin Perl module
 #   http://search.cpan.org/~tonvoon/Nagios-Plugin-0.36/
 #
-# Switch from Nagios::Plugin to Monitoring::Plugin library
 #
 # Remember to modify the $fs_cli_location variable below to suit your install.
 #
@@ -23,36 +30,28 @@
 # been transformed to hyphenated versions in order not to trip up NRPE.
 #
 # Note that since it's less complicated for Nagios to deal with one check at a 
-# time, this script only accepts one (1) -q query.
+# time
 #
 # Checks that you can run currently and what type of results to expect:
-#  sofia-status-internal - looks for the 'internal' Name and expects to
+#  --profile=internal - looks for the 'internal' Name and expects to
 #       find a state of RUNNING. Sets the result to 1 if successful, 0 otherwise.
 #       You'll need to set -c 1:1 (or -w 1:1) in Nagios if you want to
 #       alert on it. See Nagios Thresholds for more info:
 #       http://nagiosplug.sourceforge.net/developer-guidelines.html#THRESHOLDFORMAT
 #       This check also returns # of calls as performance data.
-#  sofia-status-external - looks for the 'external' Name and expects to
+#  --profile=external - looks for the 'external' Name and expects to
 #       find a state of RUNNING. Same format as the 'internal' test above.
-#  sofia-status-external-ipv6 - looks for the 'external-ipv6' Name and expects to
+#  --profile=external-ipv6 - looks for the 'external-ipv6' Name and expects to
 #       find a state of RUNNING. Same format as the 'internal-ipv6' test above.
-#  show-calls-count - reports total # of current calls.
-#  sofia-status-profile-internal-failed-calls-in - reports the FAILED-CALLS-IN
+#  --profile=internal --attribute=calls - reports total # of current calls.
+#  --profile=internal --attribute=failed-calls-in - reports the FAILED-CALLS-IN
 #       parameter in the 'sofia status profile internal' query.
-#  sofia-status-profile-internal-failed-calls-out - reports the FAILED-CALLS-OUT
+#  --profile=internal --attribute=failed-calls-out - reports the FAILED-CALLS-OUT
 #       parameter in the 'sofia status profile internal' query.
-#  show-registrations-count - reports total # of current registrations.
+#  --profile=internal --attribute=registrations - reports total # of current registrations.
+#  --gateway=<gateway name> - reports status of gateway and expects to find a state REGED (UP)
+#  --usage - additionally reports the available profiles and gateways
 #
-
-# TO DO IN FUTURE VERSIONS:
-# 1. (DONE) Include an option (perhaps -a) to list all allowed queries.
-#       Decided to refer the user back to the docs in the comments.
-# 2. (DONE) Remove excess whitespace from $rawdata
-# 3. Refine the use of the $perfdatatitle (better logic on selecting the title)
-# 4. Look for fs_cli, and report back via cmd line output and perfdata if can't find
-
-
-
 # I. Prologue
 use strict;
 use warnings;
