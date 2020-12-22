@@ -43,7 +43,7 @@
 #       find a state of RUNNING. Same format as the 'internal' test above.
 #  --profile=external-ipv6 - looks for the 'external-ipv6' Name and expects to
 #       find a state of RUNNING. Same format as the 'internal-ipv6' test above.
-#  --profile=internal --attribute=calls - reports total # of current calls.
+#  --profile=internal --attribute=calls - reports total # of concurrent calls.
 #  --profile=internal --attribute=failed-calls-in - reports the FAILED-CALLS-IN
 #       parameter in the 'sofia status profile internal' query.
 #  --profile=internal --attribute=failed-calls-out - reports the FAILED-CALLS-OUT
@@ -200,7 +200,7 @@ $p->getopts;
 # IV. Sanity check the command line arguments
 # Ensure that only one of the supported fs_cli queries are called:
 
-# check if selected profile exists and get current calls
+# check if selected profile exists and get concurrent calls
 $profile = $p->opts->profile;
 foreach my $node ($dom->findnodes('./profiles/profile')) {
     my $prf = $node->findvalue('./name');
@@ -255,7 +255,7 @@ unless ( defined $gateway ) {
 		$result = 0;
 	    }
 	    $result2 = $calls_current;
-	    $label2 = '# of current calls';
+	    $label2 = '# of concurrent calls';
 	    $rawdata = join( ' ', $url, 'RUNNING' );
 	}
 	when('tls-url'){
@@ -267,7 +267,7 @@ unless ( defined $gateway ) {
 		$result = 0;
 	    }
 	    $result2 = $calls_current;
-	    $label2 = '# of current calls';
+	    $label2 = '# of concurrent calls';
 	    $rawdata = join( ' ', $tls_url, 'RUNNING (TLS)' );
 	}
 	when('registrations') {
@@ -284,7 +284,7 @@ unless ( defined $gateway ) {
 	}
 	when('calls'){
 	    $result = $calls_current;
-	    $rawdata = join( ' ', $result, 'current calls' );
+	    $rawdata = join( ' ', $result, 'concurrent calls' );
 	}
 	default {
 	    $p->nagios_die( join(' ', "Sorry, that's not an allowed attribute for profile (attribute=$attribute)!",
